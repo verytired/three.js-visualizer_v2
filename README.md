@@ -1,74 +1,74 @@
-# three.js visualizer (remake)
+# three.js visualizer v2
 
-Web カメラや動画に、音に反応するポストエフェクトをかける VJ ツールです。
-[verytired/three.js-visualizer](https://github.com/verytired/three.js-visualizer)（three.js r74 + gulp + TypeScript 1.x）を、今の構成で作り直しました。
+An audio-reactive VJ tool that applies post-processing effects to a webcam feed or a video file.
+A rebuild of [verytired/three.js-visualizer](https://github.com/verytired/three.js-visualizer) (three.js r74 + gulp + TypeScript 1.x) on a current stack:
 
 - Vite + TypeScript
-- three.js（npm の `three/addons` のポストプロセス）
+- three.js (post-processing from `three/addons` via npm)
 - lil-gui
 
-## 起動
+## Getting started
 
 ```sh
 npm install
-npm run dev     # 開発サーバー
-npm run build   # 型チェック + テンポ推定のチェック + ビルド（dist/）
+npm run dev     # dev server
+npm run build   # type check + tempo estimator check + build (dist/)
 ```
 
-1. ブラウザでカメラとマイクの使用を許可します。
-2. 画面を一度クリックすると、音声の解析が始まります。ブラウザの自動再生制限のため、クリックするまで画面下に案内が出ます。
+1. Allow camera and microphone access in the browser.
+2. Click the page once to start audio analysis. Browsers block audio until a user gesture, so a prompt stays at the bottom of the screen until you click.
 
-カメラを使わない場合は、左上の **video** / **audio** から手持ちのファイルを選べます。音声ファイルは音が出ます。マイク入力はハウリングを防ぐため出力しません。
+To skip the webcam, pick your own files with the **video** / **audio** inputs at the top left. Audio files play through the speakers; microphone input is not sent to the output, to avoid feedback.
 
-## 操作
+## Controls
 
-| キー | 動作 |
+| Key | Action |
 |---|---|
-| Space | フィルタをランダムに切り替え |
-| 1 | 1拍目に合わせて押すと、小節の頭を合わせ直す |
-| P | 画面を PNG で保存 |
+| Space | Randomize filters |
+| 1 | Press on the downbeat to realign the bar counter |
+| P | Save the canvas as PNG |
 
-## 音への反応
+## Audio reactivity
 
-右上の GUI の **Audio** フォルダで調整します。
+Tune it in the **Audio** folder of the GUI (top right).
 
-| 項目 | 内容 |
+| Item | Description |
 |---|---|
-| level / bass | 入力レベルのメーター（全体 / 150Hz 以下） |
-| bpm / bar.beat / state | 推定 BPM、小節.拍、PLAY か BREAK か |
-| sensitivity | 入力感度。メーターが振り切れる・動かないときに調整 |
-| beat threshold | キックとみなす最低の低域レベル |
-| reactivity | 音量とビートを各パラメータに上乗せする強さ |
-| randomize on bar / every N bars | N 小節ごとに、小節の頭でフィルタをランダムに切り替え |
-| break after N bars | キックが N 小節途切れたらブレイクとみなす |
+| level / bass | Input level meters (overall / below 150 Hz) |
+| bpm / bar.beat / state | Estimated BPM, bar.beat position, PLAY or BREAK |
+| sensitivity | Input gain. Adjust if the meters clip or barely move |
+| beat threshold | Minimum bass level for a kick to count |
+| reactivity | How strongly level and beats modulate effect parameters |
+| randomize on bar / every N bars | Randomize filters on the downbeat every N bars |
+| break after N bars | Treat N bars without a kick as a break |
 
-### 仕組み
+### How it works
 
-- **キック検出：** 低域（〜150Hz）が直前の平均から急に立ち上がった瞬間をキックとみなします。直後の 300ms は再検出しません（上限 200BPM）。
-- **BPM：** 直近 8 秒のキック間隔を 80〜160BPM に折りたたみ、外れ値を除いて平均します（`src/tempo.ts`）。
-- **小節カウント：** BPM で拍を数え続け、キックが来るたびにずれを少しずつ補正します。キックが抜けても止まりません。
-- **ブレイク / ドロップ：** キックが N 小節途切れたらブレイクとみなし、フィルタを全部切って素の映像にします。ブレイク明けの最初のキックを小節の頭とみなして数え直し、画面をフラッシュさせてフィルタを切り替えます。
-- **常時の反応：** 音量とビートの強さを、RGB Shift・Film・Dot Matrix・明るさ・色相・Dot Screen に上乗せします。GUI 上の値は書き換えません。ゲインは `src/main.ts` の `MOD` で調整します。
+- **Kick detection:** a kick is a sudden rise of the low band (up to 150 Hz) above its recent average. Detection is held off for 300 ms afterwards (max 200 BPM).
+- **BPM:** kick intervals from the last 8 seconds are folded into 80–160 BPM, outliers are dropped, and the rest are averaged (`src/tempo.ts`).
+- **Bar counter:** a beat clock keeps running at the estimated BPM and is nudged toward each detected kick, so it doesn't stop when kicks drop out.
+- **Break / drop:** when kicks stop for N bars, all filters are turned off to show the clean video. The first kick after a break is taken as the downbeat of bar 1: the counter resets, the screen flashes and the filters are randomized.
+- **Continuous modulation:** level and beat pulses are added on top of RGB Shift, Film, Dot Matrix, brightness, hue and Dot Screen. The GUI values themselves are left untouched. Gains live in `MOD` in `src/main.ts`.
 
-### 制約
+### Limitations
 
-- BPM は 80〜160 に折りたたむので、170BPM は 85 と表示されます。
-- ブレイク判定はキックの有無で見ているので、4つ打ち以外の曲では反応が鈍くなります。
-- 小節の頭は、ドロップかキー `1` で合わせます。自動では判定しません。
+- BPM is folded into 80–160, so 170 BPM shows as 85.
+- Break detection relies on the kick, so it works poorly on music that isn't four-on-the-floor.
+- The downbeat is aligned only by a drop or the `1` key; it is not detected automatically.
 
-## フィルタ
+## Filters
 
-`src/filter_setting.json` に並べた順にエフェクトがかかります。GUI のスライダーもこのファイルから作られます。
+Effects are applied in the order listed in `src/filter_setting.json`, and the GUI sliders are generated from that file.
 
-Dot Matrix / Film / Mirror / RGB Shift / Dot Screen / Glitch / Tilt Shift / Bleach / Edges（Sobel） / Hue & Saturation / Brightness & Contrast / Technicolor
+Dot Matrix / Film / Mirror / RGB Shift / Dot Screen / Glitch / Tilt Shift / Bleach / Edges (Sobel) / Hue & Saturation / Brightness & Contrast / Technicolor
 
-## ファイル構成
+## Files
 
 ```
 index.html
-src/main.ts              本体（映像入力・エフェクト・GUI・音声解析・小節カウント）
-src/tempo.ts             キック間隔からの BPM 推定
-src/tempo.check.ts       BPM 推定のチェック（node src/tempo.check.ts）
-src/DotMatrixShader.ts   ドットマトリクスのシェーダ（felixturner / airtight.cc）
-src/filter_setting.json  フィルタの並びとパラメータ範囲
+src/main.ts              app (video input, effects, GUI, audio analysis, bar counter)
+src/tempo.ts             BPM estimation from kick intervals
+src/tempo.check.ts       check for the BPM estimator (node src/tempo.check.ts)
+src/DotMatrixShader.ts   dot-matrix shader (felixturner / airtight.cc)
+src/filter_setting.json  filter order and parameter ranges
 ```
