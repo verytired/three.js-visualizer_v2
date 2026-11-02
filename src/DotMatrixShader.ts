@@ -1,6 +1,6 @@
 import { Vector2 } from 'three';
 
-// felixturner / airtight.cc — テクスチャを LED のようなドットグリッドで描画
+// felixturner / airtight.cc — renders the texture as an LED-like dot grid
 export const DotMatrixShader = {
   uniforms: {
     tDiffuse: { value: null },

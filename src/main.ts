@@ -30,7 +30,7 @@ const videoTexture = new THREE.VideoTexture(video);
 
 // ---- renderer / composer ----
 const renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true });
-renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // r74 と同じ素通し
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // passthrough, same as r74
 document.body.appendChild(renderer.domElement);
 
 type UniformPass = { enabled: boolean; uniforms: Record<string, { value: any }> };
@@ -52,9 +52,9 @@ const passes: Record<string, UniformPass> = {
 const composer = new EffectComposer(renderer);
 composer.addPass(new TexturePass(videoTexture));
 const filters = setting.filters.map((f) => ({ ...f, folder: null as GUI | null }));
-for (const f of filters) composer.addPass(passes[f.name] as any); // 順序は JSON 順
+for (const f of filters) composer.addPass(passes[f.name] as any); // order follows the JSON
 
-// 無効なパスは EffectComposer がスキップし、最後の有効パスが画面に出る
+// EffectComposer skips disabled passes; the last enabled one renders to screen
 function apply() {
   for (const f of filters) {
     const pass = passes[f.name];
@@ -121,24 +121,24 @@ function randomizeFilters() {
 // ---- audio / beat detection ----
 const audioCtx = new AudioContext();
 const analyser = audioCtx.createAnalyser();
-analyser.smoothingTimeConstant = 0; // 平滑化はフレームレート依存になるので自前で時間基準にやる
+analyser.smoothingTimeConstant = 0; // built-in smoothing depends on frame rate; we smooth by time instead
 analyser.fftSize = 1024;
 const freq = new Uint8Array(analyser.frequencyBinCount); // 512
 const BIN_HZ = audioCtx.sampleRate / analyser.fftSize;
-const BASS_BINS = Math.max(1, Math.round(150 / BIN_HZ)); // 〜150Hz：キック
-const LEVEL_BINS = Math.round(6000 / BIN_HZ); // 〜6kHz：空の高域で平均を薄めない
+const BASS_BINS = Math.max(1, Math.round(150 / BIN_HZ)); // up to 150 Hz: kick
+const LEVEL_BINS = Math.round(6000 / BIN_HZ); // up to 6 kHz: keep empty highs from diluting the average
 const BEAT_HOLD_MS = 300;
-const RISE = 0.08; // 低域が直前の平均からこれだけ跳ねたらキック
+const RISE = 0.08; // a jump this large above the recent bass average counts as a kick
 let bassSlow = 0;
 let lastBeat = 0;
-let pulse = 0; // ビートで 1、以後減衰
+let pulse = 0; // 1 on a kick, then decays
 let audioSource: AudioNode | null = null;
 
 function setAudioSource(node: AudioNode, audible: boolean) {
   audioSource?.disconnect();
   audioSource = node;
   node.connect(analyser);
-  if (audible) node.connect(audioCtx.destination); // マイクは出力しない（ハウリング防止）
+  if (audible) node.connect(audioCtx.destination); // never route the mic to the output (feedback)
 }
 
 const avg = (n: number) => {
@@ -156,13 +156,13 @@ function analyse(dt: number, now: number) {
   const ease = (tau: number) => 1 - Math.exp(-dt / tau);
   audio.level += (avg(LEVEL_BINS) - audio.level) * ease(0.05);
   audio.bass = avg(BASS_BINS);
-  // バイト値は dB スケールで余韻も高く残るので、レベルではなく立ち上がり量で検出する
+  // byte data is in dB, so kick tails stay high; detect the rise, not the level
   const rise = audio.bass - bassSlow;
   bassSlow += rise * ease(0.1);
   pulse *= Math.exp(-dt * 6);
   advanceClock(dt, now);
 
-  if (now - lastBeat < BEAT_HOLD_MS) return; // 二重検出防止（上限 200BPM）
+  if (now - lastBeat < BEAT_HOLD_MS) return; // avoid double triggers (max 200 BPM)
   if (rise > RISE && audio.bass > audio.threshold) {
     pulse = 1;
     lastBeat = now;
@@ -170,10 +170,10 @@ function analyse(dt: number, now: number) {
   }
 }
 
-// ---- tempo / 小節カウント / ブレイク ----
-// キックが来なくても拍の時計は BPM で回り続け、キックが来たら位相を少しずつ寄せる
-let period = 0.5; // 1拍の秒数
-let beatPos = 0; // 拍単位の位置（0 = 1小節目の1拍目）
+// ---- tempo / bar counter / break ----
+// the beat clock keeps running at the BPM without kicks and is nudged toward each kick
+let period = 0.5; // seconds per beat
+let beatPos = 0; // position in beats (0 = bar 1, beat 1)
 let lastTick = 0;
 let inBreak = false;
 const kicks: number[] = [];
@@ -210,7 +210,7 @@ function onTick(b: number) {
   if (!inBreak && b % 4 === 0 && audio.useBeatDetect && bar % audio.everyBars === 0) randomizeFilters();
 }
 
-// ブレイク：キックが N 小節途切れたらフィルタを全部切って素の映像に
+// break: after N bars without a kick, turn all filters off
 function enterBreak() {
   inBreak = true;
   audio.state = 'BREAK';
@@ -221,7 +221,7 @@ function enterBreak() {
   apply();
 }
 
-// ドロップ：ブレイク明けの最初のキックを 1小節目の頭とみなして数え直す
+// drop: the first kick after a break becomes the downbeat of bar 1
 function drop() {
   inBreak = false;
   audio.state = 'PLAY';
@@ -231,7 +231,7 @@ function drop() {
   randomizeFilters();
 }
 
-// GUI の値に [音量ゲイン, ビートゲイン] を足す（GUI の値自体は書き換えない）
+// [level gain, beat gain] added on top of GUI values (GUI values stay untouched)
 const MOD: Record<string, Record<string, [number, number]>> = {
   rgb: { amount: [0.02, 0.03] },
   film: { intensity: [0.5, 0.3] },
@@ -249,20 +249,20 @@ function modulate() {
     }
 }
 
-// 自動再生ポリシー対策：最初の操作で AudioContext を再開。止まっている間は案内を出す
+// autoplay policy: resume the AudioContext on the first gesture; show a prompt until then
 const startEl = document.getElementById('start')!;
 const showStart = () => (startEl.style.display = audioCtx.state === 'running' ? 'none' : '');
 audioCtx.onstatechange = showStart;
 showStart();
 const resume = () => {
   audioCtx.resume();
-  if (audioEl.src && audioEl.paused) audioEl.play(); // ファイル選択時に再生が弾かれた場合の保険
+  if (audioEl.src && audioEl.paused) audioEl.play(); // in case play() was blocked when the file was picked
 };
 addEventListener('click', resume);
 addEventListener('keydown', resume);
 
 // ---- inputs ----
-// ブラウザの音声処理を切る（オンだと音楽のダイナミクスが潰れてビートが取れない）
+// disable browser voice processing; it flattens music dynamics and hides beats
 const rawAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 navigator.mediaDevices
   .getUserMedia({ video: { width: WIDTH, height: HEIGHT }, audio: rawAudio })
@@ -271,7 +271,7 @@ navigator.mediaDevices
     video.play();
     if (stream.getAudioTracks().length) setAudioSource(audioCtx.createMediaStreamSource(stream), false);
   })
-  .catch((e) => console.warn('webcam unavailable — 動画ファイルを選んでください', e));
+  .catch((e) => console.warn('webcam unavailable — pick a video file instead', e));
 
 const fileInput = (id: string) => document.getElementById(id) as HTMLInputElement;
 
@@ -290,7 +290,7 @@ fileInput('audio').addEventListener('change', (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
   audioEl.src = URL.createObjectURL(file);
-  audioElSource ??= audioCtx.createMediaElementSource(audioEl); // 1要素につき1回しか作れない
+  audioElSource ??= audioCtx.createMediaElementSource(audioEl); // can only be created once per element
   setAudioSource(audioElSource, true);
   audioCtx.resume();
   audioEl.play();
@@ -300,7 +300,7 @@ fileInput('audio').addEventListener('change', (e) => {
 addEventListener('keyup', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
   if (e.code === 'Space') randomizeFilters();
-  if (e.code === 'Digit1') resetBar(); // 1拍目に合わせて押すと小節頭を手動で合わせ直す
+  if (e.code === 'Digit1') resetBar(); // press on the downbeat to realign the bar counter
   if (e.code === 'KeyP') {
     const a = document.createElement('a');
     a.href = renderer.domElement.toDataURL('image/png');
