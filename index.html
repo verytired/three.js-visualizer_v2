@@ -8,7 +8,6 @@
     html, body { margin: 0; height: 100%; background: #000; }
     body { display: grid; place-items: center; overflow: hidden; }
     #start { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); color: #fff; font: 14px sans-serif; background: #0008; padding: 8px 16px; pointer-events: none; }
-    #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
     #files { position: fixed; top: 8px; left: 8px; color: #888; font: 12px sans-serif; }
   </style>
 </head>
@@ -16,8 +15,10 @@
   <div id="files">
     <label>video <input id="video" type="file" accept="video/*"></label>
     <label>audio <input id="audio" type="file" accept="audio/*"></label>
+    <button id="play">play</button>
+    <button id="restart">restart</button>
+    <button id="rec">rec</button>
   </div>
-  <div id="flash"></div>
   <div id="start">Click to start audio</div>
   <script type="module" src="/src/main.ts"></script>
 </body>

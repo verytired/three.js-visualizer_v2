@@ -53,6 +53,14 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new TexturePass(videoTexture));
 const filters = setting.filters.map((f) => ({ ...f, folder: null as GUI | null }));
 for (const f of filters) composer.addPass(passes[f.name] as any); // order follows the JSON
+// white flash on drops, drawn in the canvas so it shows up in recordings
+const flash = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, amount: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader:
+    'uniform sampler2D tDiffuse; uniform float amount; varying vec2 vUv; void main() { gl_FragColor = mix(texture2D(tDiffuse, vUv), vec4(1.0), amount); }',
+});
+composer.addPass(flash);
 
 // EffectComposer skips disabled passes; the last enabled one renders to screen
 function apply() {
@@ -133,11 +141,13 @@ let bassSlow = 0;
 let lastBeat = 0;
 let pulse = 0; // 1 on a kick, then decays
 let audioSource: AudioNode | null = null;
+const recAudio = audioCtx.createMediaStreamDestination(); // whatever is analysed also goes into recordings
 
 function setAudioSource(node: AudioNode, audible: boolean) {
   audioSource?.disconnect();
   audioSource = node;
   node.connect(analyser);
+  node.connect(recAudio);
   if (audible) node.connect(audioCtx.destination); // never route the mic to the output (feedback)
 }
 
@@ -227,7 +237,7 @@ function drop() {
   audio.state = 'PLAY';
   resetBar();
   pulse = 1;
-  document.getElementById('flash')!.animate([{ opacity: 1 }, { opacity: 0 }], 500);
+  flash.uniforms.amount.value = 1;
   randomizeFilters();
 }
 
@@ -254,10 +264,7 @@ const startEl = document.getElementById('start')!;
 const showStart = () => (startEl.style.display = audioCtx.state === 'running' ? 'none' : '');
 audioCtx.onstatechange = showStart;
 showStart();
-const resume = () => {
-  audioCtx.resume();
-  if (audioEl.src && audioEl.paused) audioEl.play(); // in case play() was blocked when the file was picked
-};
+const resume = () => audioCtx.resume();
 addEventListener('click', resume);
 addEventListener('keydown', resume);
 
@@ -279,8 +286,7 @@ fileInput('video').addEventListener('change', (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
   video.srcObject = null;
-  video.src = URL.createObjectURL(file);
-  video.play();
+  video.src = URL.createObjectURL(file); // loaded paused; start with the play button
 });
 
 const audioEl = new Audio();
@@ -292,8 +298,64 @@ fileInput('audio').addEventListener('change', (e) => {
   audioEl.src = URL.createObjectURL(file);
   audioElSource ??= audioCtx.createMediaElementSource(audioEl); // can only be created once per element
   setAudioSource(audioElSource, true);
+});
+
+// play / pause / restart the chosen video and audio files together (the webcam is left alone)
+const media = () => [audioEl, video].filter((m) => m.src && !m.srcObject);
+const playBtn = document.getElementById('play')!;
+const showPlaying = () => (playBtn.textContent = media().some((m) => !m.paused) ? 'pause' : 'play');
+function playAll(fromStart: boolean) {
   audioCtx.resume();
-  audioEl.play();
+  for (const m of media()) {
+    if (fromStart) m.currentTime = 0;
+    m.play();
+  }
+  if (fromStart) resetBar();
+}
+for (const m of [audioEl, video]) {
+  m.addEventListener('play', showPlaying);
+  m.addEventListener('pause', showPlaying);
+}
+playBtn.addEventListener('click', () => {
+  if (media().some((m) => !m.paused)) media().forEach((m) => m.pause());
+  else playAll(false);
+  playBtn.blur(); // keep Space for randomize
+});
+document.getElementById('restart')!.addEventListener('click', (e) => {
+  playAll(true);
+  (e.target as HTMLElement).blur();
+});
+
+// ---- recording (canvas + current audio source) ----
+const recBtn = document.getElementById('rec')!;
+const recType = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm'].find((t) =>
+  MediaRecorder.isTypeSupported(t),
+);
+let recorder: MediaRecorder | null = null;
+
+function toggleRecording() {
+  if (recorder) return recorder.stop();
+  const stream = new MediaStream([
+    ...renderer.domElement.captureStream(60).getVideoTracks(),
+    ...recAudio.stream.getAudioTracks(),
+  ]);
+  const chunks: Blob[] = [];
+  recorder = new MediaRecorder(stream, { mimeType: recType, videoBitsPerSecond: 12_000_000 });
+  recorder.ondataavailable = (e) => chunks.push(e.data);
+  recorder.onstop = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(chunks, { type: recorder!.mimeType }));
+    a.download = `${new Date().toISOString()}.${recorder!.mimeType.startsWith('video/mp4') ? 'mp4' : 'webm'}`;
+    a.click();
+    recorder = null;
+    recBtn.textContent = 'rec';
+  };
+  recorder.start(1000);
+  recBtn.textContent = '■ stop rec';
+}
+recBtn.addEventListener('click', () => {
+  toggleRecording();
+  recBtn.blur();
 });
 
 // ---- keys ----
@@ -301,6 +363,7 @@ addEventListener('keyup', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
   if (e.code === 'Space') randomizeFilters();
   if (e.code === 'Digit1') resetBar(); // press on the downbeat to realign the bar counter
+  if (e.code === 'KeyR') toggleRecording();
   if (e.code === 'KeyP') {
     const a = document.createElement('a');
     a.href = renderer.domElement.toDataURL('image/png');
@@ -316,5 +379,6 @@ renderer.setAnimationLoop((now) => {
   prev = now;
   analyse(dt, now);
   modulate();
+  flash.uniforms.amount.value = Math.max(0, flash.uniforms.amount.value - dt * 2); // fades over 0.5 s
   composer.render(dt);
 });
