@@ -304,8 +304,11 @@ fileInput('audio').addEventListener('change', (e) => {
 const media = () => [audioEl, video].filter((m) => m.src && !m.srcObject);
 const playBtn = document.getElementById('play')!;
 const showPlaying = () => (playBtn.textContent = media().some((m) => !m.paused) ? 'pause' : 'play');
+const autoRec = document.getElementById('autorec') as HTMLInputElement;
+autoRec.addEventListener('change', () => autoRec.blur()); // keep Space for randomize
 function playAll(fromStart: boolean) {
   audioCtx.resume();
+  if (autoRec.checked && !recorder) toggleRecording(); // start before play() so the first frame is captured
   for (const m of media()) {
     if (fromStart) m.currentTime = 0;
     m.play();
@@ -317,8 +320,10 @@ for (const m of [audioEl, video]) {
   m.addEventListener('pause', showPlaying);
 }
 playBtn.addEventListener('click', () => {
-  if (media().some((m) => !m.paused)) media().forEach((m) => m.pause());
-  else playAll(false);
+  if (media().some((m) => !m.paused)) {
+    media().forEach((m) => m.pause());
+    if (autoRec.checked && recorder) toggleRecording();
+  } else playAll(false);
   playBtn.blur(); // keep Space for randomize
 });
 document.getElementById('restart')!.addEventListener('click', (e) => {

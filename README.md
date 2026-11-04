@@ -24,6 +24,8 @@ To skip the webcam, pick your own files with the **video** / **audio** inputs at
 
 **rec** (or the `R` key) records the canvas together with the current audio source (the audio file, or the microphone). Press it again to stop; the file is downloaded as MP4 (H.264 + AAC) where the browser supports it, otherwise WebM.
 
+With **rec with play** checked, **play** / **restart** also start recording and **pause** stops it, so a take starts exactly with the music.
+
 ## Controls
 
 | Key | Action |
