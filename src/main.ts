@@ -86,6 +86,12 @@ resize();
 
 // ---- GUI ----
 const gui = new GUI();
+const mf = gui.addFolder('Media');
+// don't leave buttons/checkboxes focused, or Space would press them instead of randomizing
+gui.domElement.addEventListener('click', () => {
+  const el = document.activeElement as HTMLInputElement | null;
+  if (el?.tagName === 'BUTTON' || el?.type === 'checkbox') el.blur();
+});
 const audio = {
   level: 0, bass: 0, sensitivity: 1, threshold: 0.5, react: 0.5,
   bpm: 120, pos: '-', state: '-', useBeatDetect: true, everyBars: 4, breakBars: 2,
@@ -275,64 +281,76 @@ navigator.mediaDevices
   .getUserMedia({ video: { width: WIDTH, height: HEIGHT }, audio: rawAudio })
   .then((stream) => {
     video.srcObject = stream;
+    ui.video = 'webcam';
     video.play();
-    if (stream.getAudioTracks().length) setAudioSource(audioCtx.createMediaStreamSource(stream), false);
+    if (!stream.getAudioTracks().length) return;
+    setAudioSource(audioCtx.createMediaStreamSource(stream), false);
+    ui.audio = 'mic';
   })
   .catch((e) => console.warn('webcam unavailable — pick a video file instead', e));
 
-const fileInput = (id: string) => document.getElementById(id) as HTMLInputElement;
-
-fileInput('video').addEventListener('change', (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  video.srcObject = null;
-  video.src = URL.createObjectURL(file); // loaded paused; start with the play button
-});
+const pickFile = (accept: string, onFile: (file: File) => void) => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = accept;
+  input.onchange = () => input.files?.[0] && onFile(input.files[0]);
+  input.hidden = true;
+  document.body.append(input);
+  return () => input.click();
+};
 
 const audioEl = new Audio();
 audioEl.loop = true;
 let audioElSource: MediaElementAudioSourceNode | null = null;
-fileInput('audio').addEventListener('change', (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  audioEl.src = URL.createObjectURL(file);
-  audioElSource ??= audioCtx.createMediaElementSource(audioEl); // can only be created once per element
-  setAudioSource(audioElSource, true);
-});
 
 // play / pause / restart the chosen video and audio files together (the webcam is left alone)
 const media = () => [audioEl, video].filter((m) => m.src && !m.srcObject);
-const playBtn = document.getElementById('play')!;
-const showPlaying = () => (playBtn.textContent = media().some((m) => !m.paused) ? 'pause' : 'play');
-const autoRec = document.getElementById('autorec') as HTMLInputElement;
-autoRec.addEventListener('change', () => autoRec.blur()); // keep Space for randomize
+const isPlaying = () => media().some((m) => !m.paused);
+
+const ui = {
+  loadVideo: pickFile('video/*', (file) => {
+    video.srcObject = null;
+    video.src = URL.createObjectURL(file); // loaded paused; start with play
+    ui.video = file.name;
+  }),
+  loadAudio: pickFile('audio/*', (file) => {
+    audioEl.src = URL.createObjectURL(file);
+    audioElSource ??= audioCtx.createMediaElementSource(audioEl); // can only be created once per element
+    setAudioSource(audioElSource, true);
+    ui.audio = file.name;
+  }),
+  video: '-',
+  audio: '-',
+  play() {
+    if (!isPlaying()) return playAll(false);
+    media().forEach((m) => m.pause());
+    if (ui.recWithPlay && recorder) toggleRecording();
+  },
+  restart: () => playAll(true),
+  rec: () => toggleRecording(),
+  recWithPlay: false,
+};
+mf.add(ui, 'loadVideo').name('load video');
+mf.add(ui, 'video').listen().disable();
+mf.add(ui, 'loadAudio').name('load audio');
+mf.add(ui, 'audio').listen().disable();
+const playCtrl = mf.add(ui, 'play');
+mf.add(ui, 'restart');
+const recCtrl = mf.add(ui, 'rec');
+mf.add(ui, 'recWithPlay').name('rec with play');
+
 function playAll(fromStart: boolean) {
   audioCtx.resume();
-  if (autoRec.checked && !recorder) toggleRecording(); // start before play() so the first frame is captured
+  if (ui.recWithPlay && !recorder) toggleRecording(); // start before play() so the first frame is captured
   for (const m of media()) {
     if (fromStart) m.currentTime = 0;
     m.play();
   }
   if (fromStart) resetBar();
 }
-for (const m of [audioEl, video]) {
-  m.addEventListener('play', showPlaying);
-  m.addEventListener('pause', showPlaying);
-}
-playBtn.addEventListener('click', () => {
-  if (media().some((m) => !m.paused)) {
-    media().forEach((m) => m.pause());
-    if (autoRec.checked && recorder) toggleRecording();
-  } else playAll(false);
-  playBtn.blur(); // keep Space for randomize
-});
-document.getElementById('restart')!.addEventListener('click', (e) => {
-  playAll(true);
-  (e.target as HTMLElement).blur();
-});
+for (const m of [audioEl, video]) for (const ev of ['play', 'pause']) m.addEventListener(ev, () => playCtrl.name(isPlaying() ? 'pause' : 'play'));
 
 // ---- recording (canvas + current audio source) ----
-const recBtn = document.getElementById('rec')!;
 const recType = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm'].find((t) =>
   MediaRecorder.isTypeSupported(t),
 );
@@ -353,15 +371,11 @@ function toggleRecording() {
     a.download = `${new Date().toISOString()}.${recorder!.mimeType.startsWith('video/mp4') ? 'mp4' : 'webm'}`;
     a.click();
     recorder = null;
-    recBtn.textContent = 'rec';
+    recCtrl.name('rec');
   };
   recorder.start(1000);
-  recBtn.textContent = '■ stop rec';
+  recCtrl.name('■ stop rec');
 }
-recBtn.addEventListener('click', () => {
-  toggleRecording();
-  recBtn.blur();
-});
 
 // ---- keys ----
 addEventListener('keyup', (e) => {

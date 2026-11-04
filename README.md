@@ -18,11 +18,11 @@ npm run build   # type check + tempo estimator check + build (dist/)
 1. Allow camera and microphone access in the browser.
 2. Click the page once to start audio analysis. Browsers block audio until a user gesture, so a prompt stays at the bottom of the screen until you click.
 
-To skip the webcam, pick your own files with the **video** / **audio** inputs at the top left. Files load paused; **play** starts (or pauses) both together and **restart** plays both from the beginning and resets the bar counter. Audio files play through the speakers; microphone input is not sent to the output, to avoid feedback.
+To skip the webcam, use **load video** / **load audio** in the **Media** folder of the GUI (top right). Files load paused; **play** starts (or pauses) both together and **restart** plays both from the beginning and resets the bar counter. Audio files play through the speakers; microphone input is not sent to the output, to avoid feedback.
 
 ## Recording
 
-**rec** (or the `R` key) records the canvas together with the current audio source (the audio file, or the microphone). Press it again to stop; the file is downloaded as MP4 (H.264 + AAC) where the browser supports it, otherwise WebM.
+**rec** in the **Media** folder (or the `R` key) records the canvas together with the current audio source (the audio file, or the microphone). Press it again to stop; the file is downloaded as MP4 (H.264 + AAC) where the browser supports it, otherwise WebM.
 
 With **rec with play** checked, **play** / **restart** also start recording and **pause** stops it, so a take starts exactly with the music.
 
